@@ -1,8 +1,10 @@
 import { WebSocketServer } from 'ws';
 import QRCode from 'qrcode'
+import User from './User.mjs'
 
-// const USER_IP = 'localhost'
-const USER_IP = '192.168.1.166'
+const args = process.argv.slice(2)
+const HOST_URL = args[0].split('=')[1]
+
 const users = new Map();
 const server = new WebSocketServer({ port: 8080 });
 let totalUsers = 0;
@@ -12,27 +14,34 @@ function createNewUser(ws) {
   totalUsers++;
 
   // Create user
-  const newUser = {
-    userID: userID,
-    socket: ws,
-  };
+  const newUser = new User()
+  newUser.userID = userID
+  newUser.socket = ws
   users.set(userID, newUser);
   console.log('User connected:', userID);
 
   return newUser;
 }
 
+function getUsers() {
+  const list = []
+  users.forEach((user) => list.push(user.info()))
+  return list
+}
+
 server.on('connection', (ws) => {
   const newUser = createNewUser(ws);
+  const currentUsers = getUsers()
 
   // Send user information
   ws.send(JSON.stringify({
     event: 'init',
-    userID: newUser.userID,
+    user: newUser.info(),
+    users: currentUsers,
   }))
 
   // Send QR Code to join
-  const url = `http://${USER_IP}:5173/#user=${newUser.userID}`
+  const url = `${HOST_URL}/#user=${newUser.userID}`
   QRCode.toDataURL(url).then((value) => {
     ws.send(JSON.stringify({
       event: 'qrCode',
@@ -55,7 +64,7 @@ server.on('connection', (ws) => {
   // User left
   ws.on('close', () => {
     users.delete(newUser.userID);
-    console.log('User disconnected:', newUser.userID, 'Total users:', users.size);
+    console.log(`User Left: ${newUser.userID}, Total Remaining: ${users.size}`)
     users.forEach((user) => {
       if (user.userID !== newUser.userID) {
         user.socket.send(JSON.stringify({

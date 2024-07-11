@@ -1,7 +1,12 @@
 import { useEffect, useRef } from 'react'
 
-// const USER_IP = 'localhost'
-const USER_IP = '192.168.1.166'
+const url = new URL(import.meta.url)
+const USER_IP = url.hostname
+
+interface User {
+  color: string
+  position: number[]
+}
 
 function App() {
   const pRef = useRef<HTMLParagraphElement>(null)
@@ -11,14 +16,20 @@ function App() {
   useEffect(() => {
     const p = pRef.current!
     const canvas = canvasRef.current!
-    canvas.width = window.innerWidth
-    canvas.height = window.innerHeight
+    const onResize = () => {
+      canvas.width = window.innerWidth
+      canvas.height = window.innerHeight
+    }
+    onResize()
+    window.addEventListener('resize', onResize)
 
     const ctx = canvas.getContext('2d')!
-    const touches = new Map<string, number[]>()
+    const users = new Map<string, User>()
 
     const connection = {
       connected: false,
+      color: '#FF00FF',
+      position: [-1, -1],
       host: location.hash.length < 2,
       serverID: '',
       userID: '',
@@ -43,15 +54,23 @@ function App() {
       // console.log(connection.host, msg)
       switch (msg.event) {
         case 'init':
-          connection.userID = msg.userID
+          console.log(msg)
+          // User Data
+          connection.userID = msg.user.userID
+          connection.color = msg.user.color
+          connection.position = msg.user.position
 
           // Tell server you joined
-          if (!connection.host && connection.connected) {
+          if (connection.connected) {
             // Send message to host to confirm
             websocket.send(JSON.stringify({
               event: 'userJoin',
-              userID: connection.userID,
-              serverID: connection.serverID,
+              user: {
+                userID: connection.userID,
+                serverID: connection.serverID,
+                color: connection.color,
+                position: connection.position,
+              }
             }))
           }
 
@@ -69,30 +88,29 @@ function App() {
           }
           break
         case 'userJoin':
-          if (connection.host) {
-            p.innerText = `${p.innerText}\nUser Joined: ${msg.userID}`
-          }
+          users.set(msg.user.userID, {
+            color: msg.user.color,
+            position: msg.user.position,
+          })
+          p.innerText = `${p.innerText}\nUser Joined: ${msg.userID}`
           break
         case 'userLeft':
-          if (connection.host) {
-            touches.delete(msg.userID)
-            p.innerText = `${p.innerText}\nUser Left: ${msg.userID}`
-          }
+          users.delete(msg.userID)
+          p.innerText = `${p.innerText}\nUser Left: ${msg.userID}`
           break
         case 'touchStart':
-          if (connection.host) {
-            touches.set(msg.userID, msg.data)
-          }
+          users.set(msg.userID, {
+            color: msg.color,
+            position: msg.position,
+          })
           break
         case 'touchMove':
-          if (connection.host) {
-            touches.set(msg.userID, msg.data)
-          }
+          users.set(msg.userID, {
+            color: msg.color,
+            position: msg.position,
+          })
           break
         case 'touchRemove':
-          if (connection.host) {
-            touches.delete(msg.userID)
-          }
           break
       }
     }
@@ -106,25 +124,72 @@ function App() {
 
     const div = document.querySelector('.clickArea') as HTMLDivElement
 
-    const onTouchDown = (evt: TouchEvent) => {
-      const x = evt.touches[0].clientX
-      const y = evt.touches[0].clientY
+    // Click
+
+    let mouseDown = false
+
+    const onMouseDown = (evt: MouseEvent) => {
+      mouseDown = true
+      const x = evt.clientX
+      const y = evt.clientY
+      connection.position = [x, y]
       websocket.send(JSON.stringify({
         event: 'touchStart',
         userID: connection.userID,
         serverID: connection.serverID,
-        data: [x, y],
+        color: connection.color,
+        position: [x, y],
+      }))
+    }
+
+    const onMouseMove = (evt: MouseEvent) => {
+      if (!mouseDown) return
+      const x = evt.clientX
+      const y = evt.clientY
+      connection.position = [x, y]
+      websocket.send(JSON.stringify({
+        event: 'touchMove',
+        userID: connection.userID,
+        serverID: connection.serverID,
+        color: connection.color,
+        position: [x, y],
+      }))
+    }
+
+    const onMouseRemove = () => {
+      mouseDown = false
+      websocket.send(JSON.stringify({
+        event: 'touchRemove',
+        userID: connection.userID,
+        serverID: connection.serverID,
+      }))
+    }
+
+    // Touch
+
+    const onTouchDown = (evt: TouchEvent) => {
+      const x = evt.touches[0].clientX
+      const y = evt.touches[0].clientY
+      connection.position = [x, y]
+      websocket.send(JSON.stringify({
+        event: 'touchStart',
+        userID: connection.userID,
+        serverID: connection.serverID,
+        color: connection.color,
+        position: [x, y],
       }))
     }
 
     const onTouchMove = (evt: TouchEvent) => {
       const x = evt.touches[0].clientX
       const y = evt.touches[0].clientY
+      connection.position = [x, y]
       websocket.send(JSON.stringify({
         event: 'touchMove',
         userID: connection.userID,
         serverID: connection.serverID,
-        data: [x, y],
+        color: connection.color,
+        position: [x, y],
       }))
     }
 
@@ -137,20 +202,34 @@ function App() {
     }
 
     let raf = -1
-    if (connection.host) {
-      const PI2 = Math.PI * 2
-      const onUpdate = () => {
-        ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
-        touches.forEach((value: number[]) => {
-          ctx.beginPath()
-          ctx.arc(value[0], value[1], 10, 0, PI2, false);
-          ctx.fillStyle = 'red'
-          ctx.fill()
-        })
-        raf = requestAnimationFrame(onUpdate)
+    const PI2 = Math.PI * 2
+    const onUpdate = () => {
+      ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
+      users.forEach((user: User) => {
+        ctx.beginPath()
+        ctx.arc(user.position[0], user.position[1], 10, 0, PI2, false);
+        ctx.fillStyle = user.color
+        ctx.fill()
+      })
+
+      if (connection.serverID.length > 0) {
+        ctx.beginPath()
+        ctx.arc(connection.position[0], connection.position[1], 10, 0, PI2, false);
+        ctx.fillStyle = connection.color
+        ctx.fill()
       }
-      onUpdate()
-    } else {
+
+      ctx.fillStyle = 'white'
+      ctx.font = '18px Arial'
+      ctx.fillText(`Total Users: ${users.size}`, 10, window.innerHeight - 10)
+      raf = requestAnimationFrame(onUpdate)
+    }
+    onUpdate()
+
+    if (!connection.host) {
+      div.addEventListener('mousedown', onMouseDown)
+      div.addEventListener('mousemove', onMouseMove)
+      div.addEventListener('mouseup', onMouseRemove)
       div.addEventListener('touchstart', onTouchDown)
       div.addEventListener('touchmove', onTouchMove)
       div.addEventListener('touchend', onTouchRemove)
@@ -159,6 +238,10 @@ function App() {
     return () => {
       cancelAnimationFrame(raf)
       raf = -1
+      window.removeEventListener('resize', onResize)
+      div.removeEventListener('mousedown', onMouseDown)
+      div.removeEventListener('mousemove', onMouseMove)
+      div.removeEventListener('mouseup', onMouseRemove)
       div.removeEventListener('touchstart', onTouchDown)
       div.removeEventListener('touchmove', onTouchMove)
       div.removeEventListener('touchend', onTouchRemove)
