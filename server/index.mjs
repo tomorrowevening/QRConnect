@@ -7,11 +7,11 @@ const HOST_URL = args[0].split('=')[1]
 
 const users = new Map();
 const server = new WebSocketServer({ port: 8080 });
-let totalUsers = 0;
+let usersJoined = 0;
 
 function createNewUser(ws) {
-  const userID = `user_${totalUsers}`;
-  totalUsers++;
+  const userID = `user_${usersJoined}`;
+  usersJoined++;
 
   // Create user
   const newUser = new User()
